@@ -1,301 +1,200 @@
-# Esperanto-Kanji-Converter-and-Ruby-Annotation-Tool-Beta
+# دليل فني شامل حول آلية عمل تطبيق استبدال نصوص الإسبرانتو بالأحرف الصينية (كانجي)
 
-以下の説明書は、本アプリのソースコード(main.py / エスペラント文(漢字)置換用のJSONファイル生成ページ.py / esp_text_replacement_module.py / esp_replacement_json_make_module.py)を「**どのように作動し、どんなデータの流れになっているのか**」を中心に、かなり踏み込んだ観点でまとめたものです。  
-「GUI的な操作方法はある程度わかる」という前提で、内部で行われるテキスト置換フローや、JSON生成ロジック、モジュール同士の呼び出し順序などを解説していきます。  
+## مقدمة
 
----
+هذا الدليل موجه للمبرمجين من المستوى المتوسط الذين يتحدثون العربية ويرغبون في فهم آلية عمل تطبيق استبدال نصوص الإسبرانتو بالأحرف الصينية (كانجي) بشكل عميق. سنقوم بتحليل هيكلية التطبيق، والتدفق البرمجي، والآليات الرئيسية التي يعتمد عليها بعيدًا عن مجرد واجهة المستخدم.
 
-# 目次
+يتكون التطبيق من أربعة ملفات رئيسية:
+1. `main.py` - الملف الرئيسي للتطبيق
+2. `صفحة لإنشاء ملف JSON لاستبدال النصوص بالإسبرانتو بسلاسل نصية (كانجي).py` - صفحة إضافية لإنشاء ملفات JSON
+3. `esp_text_replacement_module.py` - وحدة معالجة واستبدال النصوص الإسبرانتية
+4. `esp_replacement_json_make_module.py` - وحدة مساعدة لإنشاء ملفات JSON
 
-1. **全体アーキテクチャ概要**  
-   1.1 アプリにおける「メインページ」(main.py) と「補助ページ」(エスペラント文(漢字)置換用のJSONファイル生成ページ.py)  
-   1.2 文字列(漢字)置換モジュール (esp_text_replacement_module.py)  
-   1.3 JSONファイル生成モジュール (esp_replacement_json_make_module.py)  
+## 1. نظرة عامة على البنية المعمارية للتطبيق
 
-2. **メインページ: main.py の仕組み**  
-   2.1 JSONファイル読み込みロジック  
-   2.2 placeholders (占位符) の読み込み  
-   2.3 並列処理の設定と注意点 (multiprocessing / spawn start method)  
-   2.4 入力テキストの取得 (手動入力 or ファイルアップロード)  
-   2.5 文字列(漢字)置換の実行フロー  
-   2.6 出力形式(HTML/括弧形式/単純置換等)の反映  
-   2.7 ダウンロードおよび最終表示  
+التطبيق مبني على إطار عمل Streamlit لإنشاء واجهات ويب تفاعلية باستخدام Python. يعتمد على مبدأ التدفق من أعلى إلى أسفل، حيث يتم إعادة تنفيذ الشيفرة البرمجية بأكملها في كل مرة يتفاعل فيها المستخدم مع الواجهة.
 
-3. **補助ページ: エスペラント文(漢字)置換用のJSONファイル生成ページ.py の仕組み** (JSONファイルを自分で作成したい場合)  
-   3.1 CSVファイルやユーザー定義JSONファイルの取り扱い  
-   3.2 置換用JSONファイル「3種類のリスト」(全域用 / 局所用 / 二文字語根用) を生成するまでの流れ  
-   3.3 動詞・名詞語尾の追加など細かい語尾展開ロジック  
-   3.4 大量データをどうやって合成し、優先順位(文字数×10000)を付けているか  
+### المكونات الرئيسية:
 
-4. **esp_text_replacement_module.py (文字列置換モジュール) の詳細**  
-   4.1 エスペラント文字表記 (ĉ → cx 等) 関連の変換関数たち  
-   4.2 大域置換 / 局所置換 / skip置換(“%...%”) / placeholders の仕組み  
-   4.3 orchestrate_comprehensive_esperanto_text_replacement() で行われる処理手順  
-   4.4 multiprocessing の parallel_process()  
+1. **واجهة المستخدم (UI)**: مبنية باستخدام Streamlit، توفر عناصر تفاعلية مثل أزرار الرفع والتنزيل، والنماذج، والمؤشرات، إلخ.
 
-5. **esp_replacement_json_make_module.py (JSON生成のためのモジュール) の詳細**  
-   5.1 CSVデータの読み込みと safe_replace() の組み合わせ  
-   5.2 output_format() によるルビ付与・漢字置換のバリエーション  
-   5.3 parallel_build_pre_replacements_dict() の並列化 (JSON作成時の最適化)  
-   5.4 remove_redundant_ruby_if_identical() (重複ルビ除去のトリック)  
+2. **معالجة النصوص**: تتم من خلال مجموعة من الدوال في الوحدات الفرعية، تقوم بتحليل النص الإسبرانتي وتطبيق قواعد الاستبدال عليه.
 
-6. **補足ポイント**  
-   6.1 文字数を元にした「置換優先度」の設計意図  
-   6.2 Streamlit特有の注意点 (セッションステート, レイアウト, @st.cache_data, etc.)  
-   6.3 大規模辞書(50MB級のJSON)を扱うときのパフォーマンス戦略  
+3. **التخزين المؤقت والتصدير**: يتيح التطبيق تخزين النتائج مؤقتًا وتصديرها بتنسيقات مختلفة.
 
----
+4. **المعالجة المتوازية**: يدعم التطبيق المعالجة المتوازية عند التعامل مع النصوص الكبيرة أو عمليات إنشاء ملفات JSON المعقدة.
 
+## 2. تحليل عميق للملف الرئيسي (main.py)
 
-## 1. 全体アーキテクチャ概要
+### الاستيرادات والإعدادات الأولية
 
-### 1.1 アプリにおける「メインページ」(main.py) と「補助ページ」(エスペラント文(漢字)置換用のJSONファイル生成ページ.py)
-
-- **メインページ (main.py)**  
-  アプリを起動したときに表示されるメイン画面です。  
-  置換に使う「JSONファイル」をロードし、ユーザーが入力したエスペラント文(手動orファイル経由)に対して「文字列(漢字)置換」を実行し、最終的なテキストをダウンロードできるようにする機能を担います。
-
-- **補助ページ (エスペラント文(漢字)置換用のJSONファイル生成ページ.py)**  
-  Streamlit には `pages/`フォルダに配置したスクリプトを「サブページ」として扱える仕組みがあります。  
-  このサブページでは、「エスペラント→漢字/訳語」の対応関係を納めた CSV や、「ユーザー定義の語根分解ルール/置換後文字列」を納めた JSONファイルを使い、最終的に**巨大な置換用JSON(合并3个JSON文件)** を作るためのツールを提供しています。  
-  すなわち「(エスペラント文(漢字)置換用のJSONファイル生成ページ.py)で自前の置換JSONファイルを作り、それを (main.py) に読み込ませて文章変換する」という流れを想定しています。
-
-### 1.2 文字列(漢字)置換モジュール (esp_text_replacement_module.py)
-
-- エスペラント特有文字 (ĉ, ĝ など) の表記ゆれを一元化する関数や、  
-  `%...%` や `@...@` で囲まれたテキストを局所的にスキップ/局所置換する仕組みなど、  
-  **「入力テキストをどう最終的に置換していくか」** の一連の関数が集められています。  
-- Streamlit 内部で、メインの変換処理(オールインワン)を担う `orchestrate_comprehensive_esperanto_text_replacement()` や、行単位で分割して並列処理する `parallel_process()` なども本モジュールに収録されています。
-
-### 1.3 JSONファイル生成モジュール (esp_replacement_json_make_module.py)
-
-- 補助ページ(エスペラント文(漢字)置換用のJSONファイル生成ページ.py) での**「置換用JSONを組み立てる」**処理を支えるモジュールです。  
-- CSVファイルを読み取って語根や訳語をまとめたり、動詞や名詞の語尾を付与した派生形を多数生成し、それらを**最終的に3種類**のリスト  
-  1. **全域置換用のリスト (replacements_final_list)**  
-  2. **二文字語根(2char root)の追加置換リスト (replacements_list_for_2char)**  
-  3. **局所的置換用リスト (replacements_list_for_localized_string)**  
-  にまとめ上げるまでのロジックが、関数群として実装されています。
-
----
-
-
-## 2. メインページ: main.py の仕組み
-
-ここでは**ユーザーが実際に置換処理を行う**ときの一連の手順を説明します。
-
-### 2.1 JSONファイル読み込みロジック
+في بداية الملف، نجد استيرادات لمختلف المكتبات والوحدات:
 
 ```python
-selected_option = st.radio(
-    "JSONファイルをどうしますか？ (置換用JSONファイルの読み込み)",
-    ("デフォルトを使用する", "アップロードする")
-)
+import streamlit as st
+import re
+import io
+import json
+import pandas as pd
+from typing import List, Dict, Tuple, Optional
+import streamlit.components.v1 as components
+import multiprocessing
 ```
-- **JSONファイルの扱い**  
-  - 「デフォルトを使用する」を選んだ場合 → `load_replacements_lists()` 関数(後述)により、アプリ内蔵のデフォルトJSONが読み込まれる。  
-  - 「アップロードする」を選んだ場合 → `st.file_uploader` からユーザーがアップロードした JSON を `json.load()` して読み込む。
+
+يتم استيراد دوال خاصة من الوحدات الفرعية:
 
 ```python
-@st.cache_data
-def load_replacements_lists(json_path: str) -> Tuple[List, List, List]:
-    # JSONファイルをロードし、"全域替换用"、"局部文字替换用"、"二文字词根替换用" の3つのリストを返す
-```
-- Streamlit の `@st.cache_data` デコレータにより、読み込んだ JSON はキャッシュされ、**繰り返し再読込による遅延を防ぐ**ようになっています。  
-- JSON内には**3つのリスト**が格納されており、`("全域替换用のリスト", "局部文字替换用のリスト", "二文字词根替换用のリスト")`を分割して取り出しているのがポイントです。
-
-### 2.2 placeholders (占位符) の読み込み
-
-```python
-placeholders_for_skipping_replacements = import_placeholders(
-    './Appの运行に使用する各类文件/占位符(placeholders)_%1854%-%4934%_文字列替换skip用.txt'
-)
-placeholders_for_localized_replacement = import_placeholders(
-    './Appの运行に使用する各类文件/占位符(placeholders)_@5134@-@9728@_局部文字列替换结果捕捉用.txt'
+from esp_text_replacement_module import (
+    x_to_circumflex,
+    x_to_hat,
+    hat_to_circumflex,
+    circumflex_to_hat,
+    replace_esperanto_chars,
+    import_placeholders,
+    orchestrate_comprehensive_esperanto_text_replacement,
+    parallel_process,
+    apply_ruby_html_header_and_footer
 )
 ```
-- 「%...%」で囲った箇所をスキップするときや、「@...@」で囲った箇所を局所的に置換するときに、**置換の衝突を防ぐため**のユニークな文字列(placeholder)をファイルから読み込みます。  
-- たとえば `%abc%` があったとき、まず `%abc% → (プレースホルダX)` へ仮置換し、そのあとはこの箇所が大域置換されないようブロックする、という使い方をします。
 
-### 2.3 並列処理の設定と注意点 (multiprocessing / spawn start method)
+### إعداد معالجة متعددة المعالجات (Multiprocessing)
+
+يتبع ذلك إعداد المعالجة المتوازية باستخدام `multiprocessing`:
 
 ```python
 try:
     multiprocessing.set_start_method("spawn")
 except RuntimeError:
-    pass
+    pass  # يتم تجاهل الخطأ إذا كانت طريقة البدء محددة بالفعل
 ```
-- **Windows等の環境でmultiprocessingを使う際、エラーが出るのを防ぐため**に、`spawn` モードを明示設定しています。  
-- `try-except` で囲んでいるのは、すでに別の箇所で start method が設定済みの場合を想定しているからです。  
+
+ملاحظة: يتم استخدام طريقة "spawn" بدلاً من طريقة "fork" الافتراضية لتجنب أخطاء PicklingError التي قد تحدث عند استخدام Streamlit مع multiprocessing.
+
+### تخزين مؤقت للبيانات
+
+يتم تعريف دالة `load_replacements_lists` مع مزخرف `@st.cache_data` لتخزين نتائج تحميل ملف JSON مؤقتًا وتسريع الأداء:
 
 ```python
-use_parallel = st.checkbox("並列処理を使う", value=False)
-num_processes = st.number_input("同時プロセス数", min_value=2, max_value=4, value=4, step=1)
+@st.cache_data
+def load_replacements_lists(json_path: str) -> Tuple[List, List, List]:
+    """
+    تحميل ملف JSON وإرجاع ثلاث قوائم:
+    1) replacements_final_list
+    2) replacements_list_for_localized_string
+    3) replacements_list_for_2char
+    """
+    # ... تفاصيل التنفيذ
 ```
-- ユーザーが**並列処理を使うかどうか**を選べる仕組みになっています。  
-  - Python標準の multiprocessing.Pool を使い、**行単位**で文字列変換処理を分散実行させるのが目的です。  
-  - ただし、巨大テキスト(数万行以上) でなければ並列化のオーバーヘッドが大きくなる場合もあるため、チェックボックスで選べる形になっています。
 
-### 2.4 入力テキストの取得 (手動入力 or ファイルアップロード)
+### تكوين الصفحة وواجهة المستخدم
 
 ```python
-source_option = st.radio("入力テキストをどうしますか？", ("手動入力", "ファイルアップロード"))
-```
-- どちらでも最終的には `text_area` に文字列を読み込みます。
-- 手動入力の場合 → そのままユーザーがテキストを貼り付け  
-- ファイルアップロードの場合 → `st.file_uploader` で読み込み、`.read().decode("utf-8")` したテキストを `text_area` の初期値として表示
-
-### 2.5 文字列(漢字)置換の実行フロー
-
-#### (1) 「送信」ボタンが押されたとき
-
-```python
-if submit_btn:
-    # (a) テキストをセッションステートに保存
-    st.session_state["text0_value"] = text0
-    # (b) 並列処理 or 単一プロセスを選択
-    if use_parallel:
-        processed_text = parallel_process(...)
-    else:
-        processed_text = orchestrate_comprehensive_esperanto_text_replacement(...)
-```
-- ボタンが押されたら、**メインの置換処理**を呼び出します。  
-  - `parallel_process()` は**行単位で分割し、プロセスプールで部分的に `orchestrate_comprehensive_esperanto_text_replacement()` を呼び出す**ヘルパー関数です。  
-  - `orchestrate_comprehensive_esperanto_text_replacement()` は**すべて単一スレッドで実行**します。
-
-#### (2) `orchestrate_comprehensive_esperanto_text_replacement()` の中で行われること
-
-後述「4.3 orchestrate_comprehensive_esperanto_text_replacement() で行われる処理手順」をご参照ください。  
-要点だけ箇条書きすると:
-
-1. まずエスペラント文字表記(ĉ 等)を**字上符形式**(circumflex)に正規化  
-2. `%...%` で囲まれた箇所をプレースホルダに置換し、**スキップ扱い**(後段で置換しないように)  
-3. `@...@` で囲まれた箇所は**局所的な置換**(別リストを適用)  
-4. その後、大域置換リストを適用 → `(old, new, placeholder)` の仕組みで**安全に**置換  
-5. 2文字語根の置換を2回行う (ちょっと特殊なアプローチ)  
-6. プレースホルダ(%)や(@)の部分を**復元**  
-7. (HTML形式の場合) 改行を `<br>` に変換し、連続スペースを `&nbsp;` にする  
-
-### 2.6 出力形式(HTML/括弧形式/単純置換等)の反映
-
-```python
-format_type = st.selectbox(
-    "出力形式を選択:",
-    [
-        "HTML格式_Ruby文字_大小调整",
-        "HTML格式_Ruby文字_大小调整_汉字替换",
-        "HTML格式",
-        "HTML格式_汉字替换",
-        "括弧(号)格式",
-        "括弧(号)格式_汉字替换",
-        "替换后文字列のみ(仅)保留(简单替换)"
-    ]
+st.set_page_config(
+    page_title="أداة لاستبدال الأحرف (كانجي) في النصوص الإسبرانتية",
+    layout="wide"
 )
+st.title("استبدال نصوص إسبرانتو بالأحرف الصينية (كانجي) أو بإضافة تعليقات توضيحية بتنسيق HTML (نسخة موسعة)")
 ```
-- この `format_type` は `orchestrate_comprehensive_esperanto_text_replacement()` 内でも参照され、**ルビタグをどう組み立てるか**、または**括弧形式で `(元単語)` を追記するか**といった出力表現が変わります。
 
-### 2.7 ダウンロードおよび最終表示
+### التدفق الرئيسي للتطبيق
 
-- 出力結果 `processed_text` が得られた後、以下のような表示を行います:  
-  1. **プレビュー用のテキストエリア**  
-     - 大量テキストの場合は先頭数百行 + 末尾3行のみを表示し、中間を省略するようになっている。
-  2. **HTML形式の場合**は2つのタブを用意  
-     - タブ1: `components.html(...)` で**実際のHTMLレンダリング**をスクロール表示  
-     - タブ2: `st.text_area(...)` でHTMLソースをそのまま表示  
-  3. 「置換結果のダウンロード」ボタン  
-     - ダウンロードする際の `mime="text/html"` は、HTMLフォーマットでも単純テキストとしてでも受け取れるようにする意図。
+تدفق العمليات في الملف الرئيسي:
 
----
+1. **تحميل ملف JSON (قواعد الاستبدال)**:
+   ```python
+   if selected_option == "استخدام الملف الافتراضي":
+       # تحميل الملف الافتراضي
+   else:
+       # تحميل ملف مرفوع من المستخدم
+   ```
 
+2. **تحميل placeholders (العلامات البديلة)**:
+   ```python
+   placeholders_for_skipping_replacements = import_placeholders(
+       './Appの运行に使用する各类文件/占位符(placeholders)_%1854%-%4934%_文字列替换skip用.txt'
+   )
+   ```
 
-## 3. 補助ページ: エスペラント文(漢字)置換用のJSONファイル生成ページ.py の仕組み (置換用JSONファイルを自分で作りたい場合)
+3. **ضبط الإعدادات المتقدمة** (المعالجة المتوازية)
 
-### 3.1 CSVファイルやユーザー定義JSONファイルの取り扱い
+4. **تحديد تنسيق الإخراج**:
+   ```python
+   format_type = options[selected_display]
+   ```
 
-補助ページの目的は、**巨大な 置換用JSONファイル(合并3个JSON文件) を生成し、ダウンロードする**ことです。  
+5. **إدخال النص** (يدويًا أو من ملف)
 
-1. **CSVファイルの読み込み**  
-   例えば「エスペラント語根と日本語訳の対応関係」を記したCSVなどをアップロード/デフォルト読み込みする。  
-   - `pd.read_csv(...)` で2列 (語根 / 対応ルビ) を取得し、DataFrameとして保持。  
+6. **معالجة النص** داخل نموذج:
+   ```python
+   if submit_btn:
+       # المعالجة المتوازية أو التسلسلية
+       if use_parallel:
+           processed_text = parallel_process(...)
+       else:
+           processed_text = orchestrate_comprehensive_esperanto_text_replacement(...)
+   ```
 
-2. **ユーザー定義JSON(語根分解法/置換後文字列)の読み込み**  
-   - *サンプル: `世界语单词词根分解方法の使用者自定义设置.json`*, *`替换后文字列(汉字)の使用者自定义设置.json`*  
-   - これらは「特定の語根はどう分解し、どういう接尾辞を追加するか」「カスタムの(エスペラント→漢字)を定義するか」などの詳細ルールを記述するもの。  
+7. **عرض النتائج وتوفير التنزيل**:
+   ```python
+   if processed_text:
+       # عرض معاينة
+       # تقديم زر للتنزيل
+   ```
 
-### 3.2 置換用JSONファイル「3種類のリスト」(全域用 / 局所用 / 二文字語根用) を生成するまでの流れ
+## 3. تحليل آلية معالجة النصوص (esp_text_replacement_module.py)
 
-補助ページ(エスペラント文(漢字)置換用のJSONファイル生成ページ.py) の**大まかな流れ**は下記のようになります:
+هذه الوحدة تحتوي على الدوال الأساسية لمعالجة نصوص الإسبرانتو واستبدالها.
 
-1. **(大規模データ読み込み)**  
-   - `PEJVO(世界语全部单词列表)...json` や `世界语全部词根_约11137个_202501.txt` などの内部ファイルを開き、すべてのエスペラント語根を辞書型に格納する。  
-
-2. **(CSVを反映)**  
-   - CSV (語根→日本語/漢字) を読み込み、既存の語根辞書を**上書き or 補完**する形で置換後文字列を埋め込む。  
-   - `output_format(エスペラント語根, 対応訳語, format_type, char_widths_dict)` を呼び出し、HTMLルビ形式や括弧形式など**指定フォーマット**の文字列を生成。  
-
-3. **(単語の文字数に応じた優先順位付け)**  
-   - たとえば**(文字数 × 10000)** のように、大きい数字を付与。これが**置換の優先順位**になります(文字数の多い単語から置換するように)。  
-
-4. **(語尾・接尾辞の展開)**  
-   - 動詞活用(as, is, os, us, ...)、名詞語尾(o, on, oj, ...)、形容詞語尾(a, an, aj, ...)、さらには **接頭辞**や**2文字語根**特有の展開などを大量に組み合わせて新たな候補を作り出す。  
-   - 「custom_stemming_setting_list」(= ユーザー定義JSON) で定義された語根もここで**特別扱い**して追加・削除を行う。  
-   - 結果として、**「〜さん」「〜たち」「〜される」「〜している」** 等のバリエーションが大量に生成されるわけです。
-
-5. **(最終リスト3種を組み立て、JSONにまとめる)**  
-   - 「全域置換用のリスト」(最も重要)  
-   - 「局所置換用のリスト」( `@...@` 用 )  
-   - 「二文字語根のリスト」( `al, am, av, bo...` などの特殊処理用 )  
-   - これらを1つの辞書にまとめて `json.dumps(...)` し、**ダウンロードボタン**を提供する。
-
-### 3.3 動詞・名詞語尾の追加など細かい語尾展開ロジック
-
-エスペラント文(漢字)置換用のJSONファイル生成ページ.py の中盤以降は、非常に長い if文や for文で:
-
-- 「**名詞**かつ文字数が6以下の場合、さらに派生形 `〜o, 〜on, 〜oj` なども追加で生成し、優先順位を `(文字数 + len('on'))×10000 - 3000` にする」  
-- 「**動詞**の場合は、活用語尾(as, is, os, us... あるいは受動形 at, it, ot...)を付けた派生単語も作る」  
-- 「an, on のような2文字語根に対して**o(名詞語尾)** を付ける」  
-- さらにユーザーが「この語根は -1 (除外)」 と指定した場合は**辞書から消去**する  
-
-…という処理を延々と行っています。  
-これにより、非常に細かい語尾や派生形を**一括生成**できる仕組みになっています。
-
-### 3.4 大量データをどうやって合成し、優先順位(文字数×10000)を付けているか
-
-- **置換精度向上のため**に、「文字数の多い(複合語)」を先にマッチさせる必要があります。  
-  例えば「transliterator」を「trans + liter + ator」にマッチするより先に、**「transliterator」**という長い単語として置換したい場合があります。  
-- そのため、最終的には `(単語の長さ) × 10000` のように比較的大きな数値を計算し、**descending(降順)** でソートしてから**「old → placeholder → new」**としてまとめられています。
-
-
----
-
-
-## 4. esp_text_replacement_module.py (文字列置換モジュール) の詳細
-
-ここには**本番の置換**で呼ばれる重要な関数が詰め込まれています。
-
-### 4.1 エスペラント文字表記 (ĉ → cx 等) 関連の変換関数たち
+### قواميس تحويل الأحرف
 
 ```python
 x_to_circumflex = {
-    'cx': 'ĉ', 'gx': 'ĝ', ...
+    'cx': 'ĉ', 'gx': 'ĝ', 'hx': 'ĥ', 'jx': 'ĵ', 'sx': 'ŝ', 'ux': 'ŭ',
+    'Cx': 'Ĉ', 'Gx': 'Ĝ', 'Hx': 'Ĥ', 'Jx': 'Ĵ', 'Sx': 'Ŝ', 'Ux': 'Ŭ'
 }
-
-def convert_to_circumflex(text: str) -> str:
-    text = replace_esperanto_chars(text, hat_to_circumflex)
-    text = replace_esperanto_chars(text, x_to_circumflex)
-    return text
+# ... المزيد من القواميس للتحويلات المختلفة
 ```
-- `x`形式 (cx) や `^`形式 (c^) で入力されたエスペラント文字を**最終的に ĉ, ĝ 等の字上符**に変換するための辞書が定義されています。  
-- `replace_esperanto_chars()` は `str.replace()` を連続的に行うシンプルな実装です。  
-- main.py 側では「最終出力」において `letter_type` を選べるようになっています(「x形式で出力」「^形式で出力」「字上符で出力」)。  
-  - したがって最初にすべてを ĉ などに正規化しておき、最後にユーザーが指定した表記法に合わせて再変換する形です。
 
-### 4.2 大域置換 / 局所置換 / skip置換(“%...%”) / placeholders の仕組み
+### الدوال الأساسية
 
-- `%...%` に囲まれた文字列は**大域置換の影響を受けない**ように一時的にプレースホルダに置換します。 (例: `%secret% → [PLACEHOLDER_abc]`)  
-- `@...@` に囲まれた文字列は**「局所置換リスト(replacements_list_for_localized_string)」だけ**を適用します。大域置換はしません。  
-- これらが最終的に復元されるので、**「大域置換」 → 「局所置換部は置換対象外 or 別処理」**が実現できます。  
+1. **استبدال أحرف الإسبرانتو**:
+   ```python
+   def replace_esperanto_chars(text, char_dict: Dict[str, str]) -> str:
+       # استبدال أحرف وفقًا للقاموس المعطى
+   ```
 
-### 4.3 orchestrate_comprehensive_esperanto_text_replacement() で行われる処理手順
+2. **التحويل إلى تنسيق حرف العلة (circumflex)**:
+   ```python
+   def convert_to_circumflex(text: str) -> str:
+       # تحويل تنسيقات مثل cx أو c^ إلى ĉ
+   ```
+
+3. **الاستبدال الآمن**:
+   ```python
+   def safe_replace(text: str, replacements: List[Tuple[str, str, str]]) -> str:
+       """
+       استلام قائمة من (old, new, placeholder) وإجراء استبدال مرحلي:
+       old → placeholder → new
+       """
+   ```
+
+### آلية العلامات البديلة (Placeholders)
+
+النقطة المحورية في نظام الاستبدال هو استخدام علامات بديلة (placeholders) لتجنب مشاكل الاستبدال المتداخل. تعمل كالتالي:
+
+1. يتم أولاً استبدال النص الأصلي بعلامة بديلة فريدة
+2. ثم يتم استبدال جميع العلامات البديلة بالنص النهائي
+
+مثال:
+```
+"amiko" → "$PLACE123$" → "<ruby>amik<rt>صديق</rt></ruby>o"
+```
+
+هذا يحل مشكلة استبدال النصوص المتداخلة، حيث قد يؤدي الاستبدال المباشر إلى نتائج غير متوقعة.
+
+### آلية المعالجة الشاملة
+
+الدالة `orchestrate_comprehensive_esperanto_text_replacement` هي الدالة الرئيسية التي تنسق عملية الاستبدال:
 
 ```python
 def orchestrate_comprehensive_esperanto_text_replacement(
@@ -307,38 +206,410 @@ def orchestrate_comprehensive_esperanto_text_replacement(
     replacements_list_for_2char,
     format_type
 ) -> str:
-    # (1) 半角スペース正規化 → (2) エスペラント文字(ĉ等)に統一
-    # (3) %...% スキップ部をプレースホルダに差し替え
-    # (4) @...@ 局所置換を適用
-    # (5) 大域置換リストを適用 (old→placeholder→new)
-    # (6) 二文字語根を2回追加で置換
-    # (7) placeholderを最終文字列に戻す
-    # (8) HTML形式の場合、改行→<br>、スペース→&nbsp;変換
 ```
-順番をおさらいすると:
 
-1. **`unify_halfwidth_spaces(text)`**: 半角スペースっぽい文字(U+00A0など)をASCII半角スペースに統一  
-2. **`convert_to_circumflex(text)`**: `cx, c^` 等を `ĉ` に変換 (先述)  
-3. **%スキップ**  
-   - `create_replacements_list_for_intact_parts(text, placeholders_for_skipping_replacements)` → `%abc%` の個所を**特殊プレースホルダ**に変換  
-   - 変換後、一時的に `%abc% → [PLACEHOLDER]` となる  
-4. **@局所置換**  
-   - `create_replacements_list_for_localized_replacement()` で抽出した文字列だけ**「局所置換リスト」**を適用  
-   - その結果 `@abc@ → (一時プレースホルダX)` となり、内部では**CSV由来の小さな置換**だけ実行  
-5. **大域置換**(replacements_final_list)  
-   - `(old, new, placeholder)` の形式を使い、「old → placeholder → new」という2段階置換を実行  
-   - いきなり `old → new` とやると、置換対象文字列が重複してまた置換される等の**衝突**が起きる恐れがあるため、  
-     **一旦 placeholder を挟む** ことで安全性を高めています。  
-6. **2文字語根の置換(2回)**  
-   - `replacements_list_for_2char` は接頭辞/接尾辞レベルの単語に使う特殊置換。  
-   - なぜ2回やるのか → 2文字語根の場合に、1回の置換後にさらに別の2文字とマッチさせたいケースがあるから(詳細はコード参照)。  
-7. **復元**  
-   - `%...%` / `@...@` でプレースホルダ化していた部分を元に戻す  
-8. **HTML整形**  
-   - もし `format_type` が `HTML*` 系なら、改行→`<br>`、スペース→`&nbsp;` に変換  
-   - `apply_ruby_html_header_and_footer()` で `<style>` や `<body>` タグを付け足す  
+تتضمن خطوات المعالجة:
+1. توحيد المسافات وتحويل أحرف الإسبرانتو
+2. معالجة المناطق المحاطة بـ `%...%` (للتجاهل)
+3. معالجة المناطق المحاطة بـ `@...@` (للاستبدال الموضعي)
+4. الاستبدال الشامل باستخدام `replacements_final_list`
+5. الاستبدال المخصص لجذور الكلمات المكونة من حرفين
+6. استعادة العلامات البديلة بالقيم النهائية
 
-### 4.4 multiprocessing の parallel_process()
+### المعالجة المتوازية
+
+الدالة `parallel_process` تقسم النص إلى أجزاء وتعالجها بشكل متوازٍ:
+
+```python
+def parallel_process(
+    text: str,
+    num_processes: int,
+    # ... المعلمات الأخرى
+) -> str:
+```
+
+تقوم بتقسيم النص إلى أجزاء بناءً على عدد الأسطر، ثم معالجة كل جزء في عملية منفصلة، وأخيرًا دمج النتائج.
+
+## 4. إنشاء ملفات JSON للاستبدال (صفحة لإنشاء ملف JSON...)
+
+هذا الملف يشكل الصفحة الفرعية للتطبيق، حيث يمكن للمستخدمين إنشاء ملفات JSON مخصصة للاستبدال.
+
+### العملية الأساسية:
+
+1. **استيراد البيانات**:
+   - ملف CSV يحتوي على أزواج من (جذر إسبرانتو، ترجمة/كانجي)
+   - ملف JSON لقواعد تجزئة الجذور الإسبرانتية
+   - ملفات إضافية للإعدادات
+
+2. **معالجة البيانات**:
+   - بناء قواميس للاستبدال
+   - تطبيق قواعد التحويل
+   - حساب أولويات الاستبدال (استنادًا إلى طول الكلمة وغيرها من العوامل)
+
+3. **إنشاء قوائم الاستبدال الثلاث**:
+   - `replacements_final_list` (للاستبدال الشامل)
+   - `replacements_list_for_localized_string` (للاستبدال الموضعي)
+   - `replacements_list_for_2char` (لجذور الكلمات المكونة من حرفين)
+
+4. **تصدير ملف JSON النهائي**
+
+### الجوانب التقنية البارزة:
+
+#### معالجة الجذور الخاصة
+
+يولي التطبيق اهتمامًا خاصًا لمعالجة:
+- اللواحق الفعلية (as, is, os, us, at, it, ot)
+- جذور الكلمات المكونة من حرفين
+- الكلمات التي تنتهي بـ "an" أو "on"
+
+```python
+# مثال على معالجة اللواحق الفعلية
+verb_suffix_2l_2 = {}
+for original_verb_suffix, replaced_verb_suffix in verb_suffix_2l.items():
+    verb_suffix_2l_2[original_verb_suffix] = safe_replace(replaced_verb_suffix, temporary_replacements_list_final)
+```
+
+#### حساب أولويات الاستبدال
+
+يستخدم التطبيق نظامًا معقدًا لأولويات الاستبدال:
+```python
+replacement_priority_by_length = len(esperanto_Word_before_replacement) * 10000
+```
+
+الكلمات الأطول لها أولوية أعلى في الاستبدال، مما يمنع استبدال الأجزاء الجزئية قبل استبدال الكلمات الكاملة.
+
+## 5. وحدة esp_replacement_json_make_module.py
+
+هذه الوحدة توفر دوالًا مساعدة لإنشاء ملفات JSON للاستبدال.
+
+### الدوال الرئيسية:
+
+1. **دوال تنسيق الإخراج**: تحدد كيفية تنسيق النص المستبدل:
+   ```python
+   def output_format(main_text, ruby_content, format_type, char_widths_dict):
+       # إرجاع النص بالتنسيق المطلوب بناءً على format_type
+   ```
+
+   تتضمن العديد من التنسيقات مثل:
+   - HTML مع Ruby
+   - HTML مع تعديل حجم Ruby
+   - تنسيق الأقواس
+   - استبدال بسيط
+
+2. **قياس عرض النص**:
+   ```python
+   def measure_text_width_Arial16(text, char_widths_dict: Dict[str, int]) -> int:
+       # حساب عرض النص بالبكسل استنادًا إلى قاموس عرض الحروف
+   ```
+
+3. **إدخال فواصل الأسطر**:
+   ```python
+   def insert_br_at_half_width(text, char_widths_dict: Dict[str, int]) -> str:
+       # إدخال علامات <br> عند نصف عرض النص
+   ```
+
+4. **المعالجة المتوازية لبناء قواميس الاستبدال**:
+   ```python
+   def parallel_build_pre_replacements_dict(
+       E_stem_with_Part_Of_Speech_list,
+       replacements,
+       num_processes = 4
+   ):
+       # بناء قاموس الاستبدال الأولي باستخدام المعالجة المتوازية
+   ```
+
+## 6. المفاهيم التقنية الرئيسية في التطبيق
+
+### 1. نظام علامات التبويب (Placeholders)
+
+يعتمد التطبيق بشكل كبير على نظام علامات التبويب لحل مشكلة الاستبدالات المتداخلة. يوجد ثلاثة أنواع من العلامات:
+- علامات للتجاهل (`%...%`)
+- علامات للاستبدال الموضعي (`@...@`)
+- علامات داخلية للاستبدال الشامل
+
+### 2. المعالجة المتوازية
+
+يستخدم التطبيق مكتبة `multiprocessing` من Python لتحسين الأداء:
+- في المعالجة الرئيسية للنص (`parallel_process`)
+- في إنشاء قواميس الاستبدال (`parallel_build_pre_replacements_dict`)
+
+### 3. أولويات الاستبدال
+
+نظام معقد لتحديد ترتيب الاستبدالات:
+- استنادًا إلى طول الكلمة (الكلمات الأطول لها أولوية أعلى)
+- معالجة خاصة للواحق (`as`, `is`, `os`, ...)
+- معالجة خاصة للكلمات التي تنتهي بـ "an" أو "on"
+
+### 4. التخزين المؤقت في Streamlit
+
+استخدام `@st.cache_data` لتخزين نتائج معالجة البيانات الكبيرة مؤقتًا:
+```python
+@st.cache_data
+def load_replacements_lists(json_path: str):
+    # ...
+```
+
+### 5. تعديل أحجام Ruby حسب عرض النص
+
+آلية ذكية لتعديل حجم تعليقات Ruby استنادًا إلى نسبة عرض التعليق إلى عرض النص الأصلي:
+```python
+if ratio_1 > 6:
+    return f'<ruby>{main_text}<rt class="XXXS_S">{insert_br_at_third_width(ruby_content, char_widths_dict)}</rt></ruby>'
+elif ratio_1 > (9/3):
+    return f'<ruby>{main_text}<rt class="XXS_S">{insert_br_at_half_width(ruby_content, char_widths_dict)}</rt></ruby>'
+# ...
+```
+
+## 7. التدفق البرمجي بالتفصيل
+
+### 1. تدفق الصفحة الرئيسية (main.py)
+
+1. **بدء التطبيق**:
+   - تكوين الصفحة والعنوان
+   - استيراد الوحدات اللازمة
+
+2. **تحميل البيانات**:
+   - تحميل ملف JSON للاستبدال (افتراضي أو مخصص)
+   - تحميل ملفات placeholders
+
+3. **ضبط الإعدادات**:
+   - إعدادات المعالجة المتوازية
+   - اختيار تنسيق الإخراج
+   - اختيار مصدر إدخال النص
+
+4. **معالجة النص**:
+   - قراءة النص المدخل (من مربع النص أو ملف مرفوع)
+   - تطبيق المعالجة المناسبة (متوازية أو تسلسلية)
+   - تحويل أحرف الإسبرانتو حسب الإعدادات
+
+5. **عرض النتائج**:
+   - عرض معاينة HTML أو النص العادي
+   - توفير زر لتنزيل النتيجة
+
+### 2. تدفق إنشاء ملف JSON
+
+1. **جمع البيانات المدخلة**:
+   - تحميل ملف CSV للجذور والترجمات
+   - تحميل ملفات JSON للإعدادات
+
+2. **بناء قواميس الاستبدال**:
+   - تحويل بيانات CSV إلى قائمة استبدال مؤقتة
+   - دمج مع الإعدادات المخصصة
+
+3. **المعالجة المتقدمة**:
+   - تطبيق قواعد اللواحق والبادئات
+   - معالجة الحالات الخاصة (مثل "an" و "on")
+   - تعيين أولويات الاستبدال
+
+4. **إنشاء القوائم النهائية**:
+   - إنشاء replacements_final_list
+   - إنشاء replacements_list_for_localized_string
+   - إنشاء replacements_list_for_2char
+
+5. **تصدير النتيجة**:
+   - دمج القوائم في ملف JSON واحد
+   - توفير زر للتنزيل
+
+## 8. تقنيات متقدمة في التطبيق
+
+### 1. التعبيرات النمطية (Regular Expressions)
+
+يستخدم التطبيق التعبيرات النمطية لمعالجة النص:
+```python
+PERCENT_PATTERN = re.compile(r'%(.{1,50}?)%')
+AT_PATTERN = re.compile(r'@(.{1,18}?)@')
+```
+
+تُستخدم هذه التعبيرات لتحديد أجزاء النص التي يجب تجاهلها أو معالجتها بشكل مختلف.
+
+### 2. HTML الديناميكي
+
+ينشئ التطبيق HTML بشكل ديناميكي مع تعديل الأنماط حسب المحتوى:
+```python
+ruby_style_head = """<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <style>
+    <!-- أنماط CSS ديناميكية -->
+    </style>
+  </head>
+  <body>
+"""
+```
+
+### 3. حساب عرض النص
+
+يستخدم التطبيق قاموسًا يحتوي على عرض كل حرف بالبكسل، مما يسمح بحساب دقيق لعرض النص وتحديد أماكن فواصل الأسطر:
+```python
+def measure_text_width_Arial16(text, char_widths_dict):
+    total_width = 0
+    for ch in text:
+        char_width = char_widths_dict.get(ch, 8)
+        total_width += char_width
+    return total_width
+```
+
+### 4. تقنيات التعامل مع الكلمات المركبة في الإسبرانتو
+
+الإسبرانتو لغة تركيبية يتم فيها تشكيل الكلمات من مجموعة من الجذور واللواحق. يتعامل التطبيق مع هذا من خلال:
+- تحديد أولويات خاصة للجذور واللواحق
+- معالجة خاصة للكلمات المشتقة
+
+## 9. نصائح لتطوير التطبيق
+
+إذا كنت ترغب في تعديل أو تطوير هذا التطبيق، إليك بعض النصائح:
+
+### 1. إضافة لغات جديدة
+
+لإضافة لغة جديدة للتطبيق:
+1. إنشاء ملف CSV جديد يربط بين جذور الإسبرانتو والترجمات باللغة الجديدة
+2. تعديل العناصر النصية في واجهة المستخدم
+3. تعديل النصوص في ملفات العلامات البديلة إذا لزم الأمر
+
+### 2. تحسين المعالجة المتوازية
+
+يمكن تحسين المعالجة المتوازية من خلال:
+1. تحسين استراتيجية تقسيم النص (قد يكون التقسيم حسب الجمل أفضل من التقسيم حسب الأسطر)
+2. استخدام تقنيات متقدمة مثل concurrent.futures للتحكم بشكل أفضل في العمليات المتوازية
+
+### 3. تعزيز قدرات معالجة النص
+
+يمكن تعزيز قدرات معالجة النص من خلال:
+1. إضافة دعم للتحليل الصرفي الآلي للإسبرانتو
+2. استخدام خوارزميات أكثر تطورًا لتحديد أولويات الاستبدال
+3. تحسين التعامل مع الكلمات غير المعروفة
+
+### 4. تطوير واجهة المستخدم
+
+يمكن تطوير واجهة المستخدم من خلال:
+1. إضافة إمكانية التحرير المباشر لقواعد الاستبدال
+2. توفير معاينة فورية للتغييرات
+3. إضافة إمكانية حفظ الإعدادات المفضلة للمستخدم
+
+## 10. تحديات تقنية وحلولها
+
+### 1. مشكلة الاستبدالات المتداخلة
+
+**المشكلة**: عند استبدال الكلمات، قد تتداخل الاستبدالات إذا كانت إحدى الكلمات جزءًا من كلمة أخرى.
+
+**الحل**: نظام العلامات البديلة (placeholders)، حيث يتم استبدال النص الأصلي بعلامة بديلة فريدة أولاً، ثم استبدال العلامات البديلة بالنص النهائي.
+
+### 2. تعقيد قواعد الإسبرانتو
+
+**المشكلة**: الإسبرانتو لغة تركيبية مع قواعد معقدة للجذور واللواحق.
+
+**الحل**: تعريف قواعد خاصة للعناصر المختلفة (اللواحق الفعلية، الجذور المكونة من حرفين، إلخ) وتطبيقها بأولويات محددة.
+
+### 3. أداء معالجة النصوص الكبيرة
+
+**المشكلة**: بطء في معالجة النصوص الكبيرة.
+
+**الحل**: المعالجة المتوازية لتقسيم المهام بين عدة معالجات، مع آليات التخزين المؤقت لتجنب إعادة المعالجة.
+
+### 4. التعامل مع تنسيقات مختلفة لأحرف الإسبرانتو
+
+**المشكلة**: توجد عدة طرق لكتابة أحرف الإسبرانتو الخاصة (ĉ, ĝ, ...).
+
+**الحل**: قواميس تحويل متعددة للتعامل مع جميع التنسيقات المحتملة (x_to_circumflex, hat_to_circumflex, ...).
+
+
+## 11. خلاصة (تتمة)
+
+تطبيق استبدال نصوص الإسبرانتو بالأحرف الصينية (كانجي) هو نظام معقد ولكنه مصمم بشكل جيد، يوضح استخدام تقنيات متقدمة في معالجة النصوص وتطوير واجهات المستخدم التفاعلية. يجمع التطبيق بين فهم عميق للغة الإسبرانتو وتقنيات برمجية متطورة لتوفير أداة تعليمية فعّالة.
+
+من خلال دراسة هذا التطبيق، يمكننا تعلم العديد من التقنيات المتقدمة مثل نظام العلامات البديلة للاستبدال، والمعالجة المتوازية، وتكييف عرض HTML بشكل ديناميكي، وآليات التخزين المؤقت الفعّالة.
+
+## 12. تحليل تفصيلي للوظائف الرئيسية
+
+### 1. دالة orchestrate_comprehensive_esperanto_text_replacement
+
+هذه الدالة هي قلب عملية الاستبدال، وتنسق بين جميع مراحل المعالجة:
+
+```python
+def orchestrate_comprehensive_esperanto_text_replacement(
+    text,
+    placeholders_for_skipping_replacements,
+    replacements_list_for_localized_string,
+    placeholders_for_localized_replacement,
+    replacements_final_list,
+    replacements_list_for_2char,
+    format_type
+) -> str:
+    # 1, 2) توحيد المسافات + تحويل أحرف الإسبرانتو إلى شكل حرف العلة
+    text = unify_halfwidth_spaces(text)
+    text = convert_to_circumflex(text)
+
+    # 3) استبدال أجزاء %...% بعلامات بديلة مؤقتًا (للتجاهل)
+    replacements_list_for_intact_parts = create_replacements_list_for_intact_parts(
+        text, placeholders_for_skipping_replacements
+    )
+    # ترتيب حسب طول النص (الأطول أولاً) لتجنب التداخل
+    sorted_replacements_list_for_intact_parts = sorted(
+        replacements_list_for_intact_parts, key=lambda x: len(x[0]), reverse=True
+    )
+    for original, place_holder_ in sorted_replacements_list_for_intact_parts:
+        text = text.replace(original, place_holder_)
+
+    # 4) الاستبدال الموضعي للأجزاء المحاطة بـ @...@
+    tmp_replacements_list_for_localized_string_2 = create_replacements_list_for_localized_replacement(
+        text, placeholders_for_localized_replacement, replacements_list_for_localized_string
+    )
+    sorted_replacements_list_for_localized_string = sorted(
+        tmp_replacements_list_for_localized_string_2, key=lambda x: len(x[0]), reverse=True
+    )
+    for original, place_holder_, replaced_original in sorted_replacements_list_for_localized_string:
+        text = text.replace(original, place_holder_)
+
+    # 5) الاستبدال الشامل باستخدام replacements_final_list
+    valid_replacements = {}
+    for old, new, placeholder in replacements_final_list:
+        if old in text:
+            text = text.replace(old, placeholder)
+            valid_replacements[placeholder] = new
+
+    # 6) استبدال الجذور المكونة من حرفين (مرتين)
+    valid_replacements_for_2char_roots = {}
+    for old, new, placeholder in replacements_list_for_2char:
+        if old in text:
+            text = text.replace(old, placeholder)
+            valid_replacements_for_2char_roots[placeholder] = new
+
+    valid_replacements_for_2char_roots_2 = {}
+    for old, new, placeholder in replacements_list_for_2char:
+        if old in text:
+            place_holder_second = "!" + placeholder + "!"
+            text = text.replace(old, place_holder_second)
+            valid_replacements_for_2char_roots_2[place_holder_second] = new
+
+    # 7) استعادة العلامات البديلة بالنص النهائي (بترتيب عكسي)
+    for place_holder_second, new in reversed(valid_replacements_for_2char_roots_2.items()):
+        text = text.replace(place_holder_second, new)
+    for placeholder, new in reversed(valid_replacements_for_2char_roots.items()):
+        text = text.replace(placeholder, new)
+    for placeholder, new in valid_replacements.items():
+        text = text.replace(placeholder, new)
+
+    # استعادة العلامات البديلة للاستبدال الموضعي والتجاهل
+    for original, place_holder_, replaced_original in sorted_replacements_list_for_localized_string:
+        text = text.replace(place_holder_, replaced_original.replace("@",""))
+    for original, place_holder_ in sorted_replacements_list_for_intact_parts:
+        text = text.replace(place_holder_, original.replace("%",""))
+
+    # 8) تنسيق HTML إذا لزم الأمر
+    if "HTML" in format_type:
+        text = text.replace("\n", "<br>\n")
+        text = re.sub(r"   ", "&nbsp;&nbsp;&nbsp;", text)
+        text = re.sub(r"  ", "&nbsp;&nbsp;", text)
+
+    return text
+```
+
+هذه الدالة تظهر نهجًا متعدد المراحل للاستبدال النصي، وهو ضروري للتعامل مع التعقيدات في اللغة الإسبرانتية.
+
+### 2. دالة parallel_process
+
+تقوم هذه الدالة بتنفيذ المعالجة المتوازية للنصوص الكبيرة:
 
 ```python
 def parallel_process(
@@ -346,110 +617,332 @@ def parallel_process(
     num_processes: int,
     placeholders_for_skipping_replacements,
     replacements_list_for_localized_string,
-    ...
-    format_type: str
+    placeholders_for_localized_replacement,
+    replacements_final_list,
+    replacements_list_for_2char,
+    format_type
 ) -> str:
-    # textを行単位に分割し、分割した部分を
-    # Pool.starmap(process_segment, [...]) で並列処理
-    # 最後に''.joinして返す
+    # التحقق مما إذا كانت المعالجة المتوازية ضرورية
+    if num_processes <= 1:
+        return orchestrate_comprehensive_esperanto_text_replacement(...)
+
+    # تقسيم النص إلى أسطر
+    lines = re.findall(r'.*?\n|.+$', text)
+    num_lines = len(lines)
+
+    if num_lines <= 1:
+        return orchestrate_comprehensive_esperanto_text_replacement(...)
+
+    # تحديد نطاقات التقسيم
+    lines_per_process = max(num_lines // num_processes, 1)
+    ranges = [(i * lines_per_process, (i + 1) * lines_per_process) for i in range(num_processes)]
+    ranges[-1] = (ranges[-1][0], num_lines)  # تعديل النطاق الأخير ليشمل جميع الأسطر المتبقية
+
+    # إنشاء مجمع عمليات ومعالجة كل جزء
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        results = pool.starmap(
+            process_segment,
+            [
+                (
+                    lines[start:end],
+                    placeholders_for_skipping_replacements,
+                    replacements_list_for_localized_string,
+                    placeholders_for_localized_replacement,
+                    replacements_final_list,
+                    replacements_list_for_2char,
+                    format_type
+                )
+                for (start, end) in ranges
+            ]
+        )
+
+    # دمج النتائج
+    return ''.join(results)
 ```
 
-- ユーザーが選んだ「同時プロセス数」だけプロセスを立ち上げ、  
-  テキストを**行単位**で分割して `process_segment()` を実行させる仕組みです。  
-- `process_segment()` は単に `orchestrate_comprehensive_esperanto_text_replacement()` を呼び出すだけなので、**並列実行の粒度は「行」**です。  
-  - 行数が非常に多いテキスト (大量文章) であれば高い効果が期待できる反面、分割単位が不均一だと速度が出にくい場合がある点に注意が必要です。
+تُظهر هذه الدالة نمطًا شائعًا في المعالجة المتوازية: تقسيم المهمة الكبيرة (النص) إلى أجزاء أصغر، ومعالجة كل جزء بشكل منفصل، ثم دمج النتائج.
 
----
+### 3. آلية إنشاء ملف JSON للاستبدال
 
+الخطوات الرئيسية في عملية إنشاء ملف JSON:
 
-## 5. esp_replacement_json_make_module.py (JSON生成モジュール) の詳細
+```python
+# (1) فتح قاموس الجذور الإسبرانتية مع أقسام الكلام
+with open("./Appの运行に使用する各类文件/PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表(E_stem_with_Part_Of_Speech_list).json", "r", encoding="utf-8") as g:
+    E_stem_with_Part_Of_Speech_list = json.load(g)
 
-補助ページ (エスペラント文(漢字)置換用のJSONファイル生成ページ.py) が主にこのモジュールの関数を呼び出して**最終的なJSONを組み立て**ています。
+# (2) إنشاء قاموس مؤقت لجميع جذور الإسبرانتو
+temporary_replacements_dict = {}
+with open("./Appの运行に使用する各类文件/世界语全部词根_约11137个_202501.txt", 'r', encoding='utf-8') as file:
+    E_roots = file.readlines()
+    for E_root in E_roots:
+        E_root = E_root.strip()
+        if not E_root.isdigit():
+            temporary_replacements_dict[E_root] = [E_root, len(E_root)]
 
-### 5.1 CSVデータの読み込みと safe_replace() の組み合わせ
+# (3) تحديث القاموس باستخدام بيانات CSV
+for *, (E*root, hanzi_or_meaning) in CSV_data_imported.iterrows():
+    if pd.notna(E_root) and pd.notna(hanzi_or_meaning) \
+       and '#' not in E_root and (E_root != '') and (hanzi_or_meaning != ''):
+        temporary_replacements_dict[E_root] = [
+            output_format(E_root, hanzi_or_meaning, format_type, char_widths_dict),
+            len(E_root)
+        ]
 
-- CSVから読み込んだ (エスペラント語根, 訳語ルビ) のペアを大量に保持したのち、  
-  それらを `safe_replace()` などを使い、**一括で「文字列(漢字)を置換しやすい形式」に変換**していきます。  
-- 同名関数 `safe_replace()` が main.py 側にもあり、エスペラント文(漢字)置換用のJSONファイル生成ページ.py 側にもあるのは**重複定義**ですが、呼び出し元が異なるため両方に同居しています。
+# (4) ترتيب حسب طول الكلمة (الأطول أولاً)
+temporary_replacements_list_1 = []
+for old, new in temporary_replacements_dict.items():
+    temporary_replacements_list_1.append((old, new[0], new[1]))
+temporary_replacements_list_2 = sorted(temporary_replacements_list_1, key=lambda x: x[2], reverse=True)
 
-### 5.2 output_format() によるルビ付与・漢字置換のバリエーション
+# (5) إنشاء قائمة الاستبدال مع العلامات البديلة
+temporary_replacements_list_final = []
+for kk in range(len(temporary_replacements_list_2)):
+    temporary_replacements_list_final.append([
+        temporary_replacements_list_2[kk][0],
+        temporary_replacements_list_2[kk][1],
+        imported_placeholders_for_global_replacement[kk]
+    ])
+
+# (6) بناء قاموس الاستبدال الأولي باستخدام المعالجة المتوازية أو التسلسلية
+if use_parallel:
+    pre_replacements_dict_1 = parallel_build_pre_replacements_dict(
+        E_stem_with_Part_Of_Speech_list,
+        temporary_replacements_list_final,
+        num_processes
+    )
+else:
+    # تنفيذ تسلسلي مع شريط التقدم
+    # ...
+
+# (7-8) تطبيق قواعد اللواحق والبادئات وحالات خاصة أخرى
+# ...
+
+# (9) تطبيق إعدادات تجزئة الجذور المخصصة
+if len(custom_stemming_setting_list) > 0:
+    # ...
+
+# (10) تطبيق إعدادات النص المستبدل المخصصة
+if len(user_replacement_item_setting_list) > 0:
+    # ...
+
+# (11-15) إنشاء القوائم النهائية
+# ...
+
+# (16) دمج القوائم في كائن JSON واحد
+combined_data = {}
+combined_data["全域替换用のリスト(列表)型配列(replacements_final_list)"] = replacements_final_list
+combined_data["二文字词根替换用のリスト(列表)型配列(replacements_list_for_2char)"] = replacements_list_for_2char
+combined_data["局部文字替换用のリスト(列表)型配列(replacements_list_for_localized_string)"] = replacements_list_for_localized_string
+
+download_data = json.dumps(combined_data, ensure_ascii=False, indent=2)
+```
+
+تُظهر هذه العملية كيفية بناء قواعد استبدال معقدة من مصادر بيانات متعددة، مع معالجة الحالات الخاصة وتطبيق أولويات محددة.
+
+## 13. آليات هامة يجب فهمها
+
+### 1. آلية safe_replace
+
+هذه الدالة أساسية في التطبيق، وتضمن الاستبدال السليم دون تداخل:
+
+```python
+def safe_replace(text: str, replacements: List[Tuple[str, str, str]]) -> str:
+    """
+    تستلم قائمة من (old, new, placeholder) وتجري استبدالًا مرحليًا:
+    old → placeholder → new
+    """
+    valid_replacements = {}
+    # أولًا old→placeholder
+    for old, new, placeholder in replacements:
+        if old in text:
+            text = text.replace(old, placeholder)
+            valid_replacements[placeholder] = new
+    # ثم placeholder→new
+    for placeholder, new in valid_replacements.items():
+        text = text.replace(placeholder, new)
+    return text
+```
+
+تعمل هذه الدالة على مرحلتين:
+1. استبدال النص الأصلي بعلامة بديلة فريدة
+2. استبدال العلامات البديلة بالنص النهائي
+
+هذا يتجنب مشكلة الاستبدالات المتداخلة، على سبيل المثال:
+- لنفترض أننا نريد استبدال "ami" بـ "صَدِيق" و "amiko" بـ "صَدِيق"
+- إذا قمنا باستبدال "ami" أولًا، فإن "amiko" ستصبح "صَدِيقko"، وهو ليس ما نريده
+- باستخدام العلامات البديلة، سيتم استبدال "amiko" بـ "$PLACE123$" أولًا، ثم "ami" بـ "$PLACE456$"، ثم استبدال كل علامة بديلة بالنص المقابل
+
+### 2. آلية معالجة الجذور المكونة من حرفين
+
+الإسبرانتو تعتمد بشكل كبير على اللواحق والبادئات المكونة من حرفين. يعالج التطبيق هذه بطريقة خاصة:
+
+```python
+suffix_2char_roots=['ad', 'ag', 'am', 'ar', 'as', 'at', 'av', /* ... */]
+prefix_2char_roots=['al', 'am', 'av', 'bo', 'di', /* ... */]
+standalone_2char_roots=['al', 'ci', 'da', 'de', /* ... */]
+
+# إنشاء قائمة استبدال للواحق المكونة من حرفين
+replacements_list_for_suffix_2char_roots = []
+for i in range(len(suffix_2char_roots)):
+    replaced_suffix = remove_redundant_ruby_if_identical(
+        safe_replace(suffix_2char_roots[i], temporary_replacements_list_final)
+    )
+    replacements_list_for_suffix_2char_roots.append([
+        "$"+suffix_2char_roots[i],
+        "$"+replaced_suffix,
+        "$"+imported_placeholders_for_2char_replacement[i]
+    ])
+    # إضافة إصدارات بأحرف كبيرة وحرف أول كبير
+    # ...
+
+# تكرار العملية للبادئات والكلمات المستقلة المكونة من حرفين
+# ...
+
+# دمج جميع القوائم
+replacements_list_for_2char = (
+    replacements_list_for_standalone_2char_roots
+    + replacements_list_for_suffix_2char_roots
+    + replacements_list_for_prefix_2char_roots
+)
+```
+
+هذا النهج يضمن التعامل المناسب مع العناصر المختلفة في اللغة الإسبرانتية.
+
+### 3. آلية تنسيق الإخراج
+
+تعتمد طريقة تنسيق الإخراج على نوع التنسيق المختار والنسبة بين عرض النص الأصلي والترجمة:
 
 ```python
 def output_format(main_text, ruby_content, format_type, char_widths_dict):
-    # format_type に応じて、HTMLルビ、括弧形式、単純置換などを生成する
-```
-- たとえば `format_type == 'HTML格式_Ruby文字_大小调整'` のときは、「文字幅」に応じて `<rt class="L_L">` などを付け分ける実装がなされています。  
-  - `measure_text_width_Arial16()` や `insert_br_at_half_width()` などを使い、**ルビ文字列が親文字列より長い場合に改行**する等の処理が行われる。  
-- `括弧(号)格式` の場合は単に `main_text(ruby_content)` のように括弧で括るだけ、  
-- `替换后文字列のみ(仅)保留(简单替换)` の場合は `ruby_content` だけ出す、など**まとめて出力形態を切り替える**仕組みです。
+    if format_type == 'HTML格式_Ruby文字_大小调整':
+        width_ruby = measure_text_width_Arial16(ruby_content, char_widths_dict)
+        width_main = measure_text_width_Arial16(main_text, char_widths_dict)
+        ratio_1 = width_ruby / width_main
 
-### 5.3 parallel_build_pre_replacements_dict() の並列化 (JSON作成時の最適化)
+        if ratio_1 > 6:
+            return f'<ruby>{main_text}<rt class="XXXS_S">{insert_br_at_third_width(ruby_content, char_widths_dict)}</rt></ruby>'
+        elif ratio_1 > (9/3):
+            return f'<ruby>{main_text}<rt class="XXS_S">{insert_br_at_half_width(ruby_content, char_widths_dict)}</rt></ruby>'
+        # ... المزيد من الحالات
+
+    elif format_type == 'HTML格式_Ruby文字_大小调整_汉字替换':
+        # ... (عكس الأدوار بين main_text و ruby_content)
+
+    elif format_type == 'HTML格式':
+        return f'<ruby>{main_text}<rt>{ruby_content}</rt></ruby>'
+
+    elif format_type == 'HTML格式_汉字替换':
+        return f'<ruby>{ruby_content}<rt>{main_text}</rt></ruby>'
+
+    elif format_type == '括弧(号)格式':
+        return f'{main_text}({ruby_content})'
+
+    elif format_type == '括弧(号)格式_汉字替换':
+        return f'{ruby_content}({main_text})'
+
+    elif format_type == '替换后文字列のみ(仅)保留(简单替换)':
+        return f'{ruby_content}'
+```
+
+هذه الدالة توضح كيفية تكييف الإخراج حسب احتياجات المستخدم ونسبة عرض النص.
+
+## 14. تطوير وتوسيع التطبيق
+
+إذا كنت مهتمًا بتطوير هذا التطبيق أو توسيعه، إليك بعض المجالات التي يمكنك استكشافها:
+
+### 1. دعم لغات إضافية
+
+يمكن توسيع التطبيق ليدعم لغات أخرى إلى جانب العربية، اليابانية، الصينية، إلخ. لتحقيق ذلك:
+
+1. أنشئ ملف CSV يحتوي على جذور الإسبرانتو والترجمات باللغة الجديدة
+2. قم بتحديث واجهة المستخدم لتعكس اللغة الجديدة
+3. تأكد من أن التطبيق يتعامل بشكل صحيح مع أنظمة الكتابة المختلفة (مثل LTR/RTL)
+
+### 2. دمج تحليل صرفي متقدم للإسبرانتو
+
+يمكن تحسين دقة الاستبدال من خلال دمج محلل صرفي متقدم للإسبرانتو:
+
+1. استخدام مكتبات مثل NLTK أو SpaCy مع تدريبها على الإسبرانتو
+2. تطوير قواعد أكثر دقة لتحليل الكلمات المركبة
+3. إضافة ميزة التعرف التلقائي على الجذور غير المعروفة
+
+### 3. تحسين واجهة المستخدم
+
+1. إضافة خيار التحرير المباشر للاستبدالات
+2. تضمين معاينة فورية للتغييرات
+3. إضافة وضع تفاعلي للتعلم، حيث يمكن للمستخدمين النقر على الكلمات لرؤية معلومات إضافية
+
+### 4. تحسين أداء المعالجة
+
+1. استخدام تقنيات مثل Cython لتسريع العمليات الحرجة
+2. تحسين استراتيجيات التخزين المؤقت
+3. تطوير خوارزميات استبدال أكثر كفاءة
+
+### 5. ميزات تعليمية إضافية
+
+1. إضافة تمارين تفاعلية لتعلم جذور الإسبرانتو
+2. دمج قاموس إسبرانتو-عربي
+3. إضافة ميزة النطق للكلمات الإسبرانتية
+
+## 15. مكتبات Streamlit وتكاملها
+
+من المهم فهم كيفية استخدام التطبيق لميزات Streamlit المختلفة:
+
+### استخدام مكونات Streamlit المتقدمة
 
 ```python
-def parallel_build_pre_replacements_dict(
-    E_stem_with_Part_Of_Speech_list,
-    replacements,
-    num_processes
-) -> Dict[str, List[str]]:
-    # E_stem_with_Part_Of_Speech_listを分割し、
-    # process_chunk_for_pre_replacements() を並列に実行してマージ
-```
-- (エスペラント文(漢字)置換用のJSONファイル生成ページ.py) で使われる関数。**エスペラントの語根 + 品詞情報**を大量に抱えたリストを分割し、各パートで `safe_replace()` して部分的な結果辞書を返し、それを最終的にマージする。  
-- **数万〜数十万規模**のデータを扱うときに速度向上が見込めます。
+# عرض HTML مخصص
+components.html(preview_text, height=500, scrolling=True)
 
-### 5.4 remove_redundant_ruby_if_identical() (重複ルビ除去のトリック)
+# زر تنزيل
+st.download_button(
+    label="تنزيل النتيجة",
+    data=download_data,
+    file_name="نتيجة_الاستبدال.html",
+    mime="text/html"
+)
+
+# علامات التبويب
+tab1, tab2 = st.tabs(["معاينة HTML", "النتيجة (كود HTML)"])
+with tab1:
+    # محتوى علامة التبويب الأولى
+```
+
+### استخدام التخزين المؤقت
 
 ```python
-IDENTICAL_RUBY_PATTERN = re.compile(r'<ruby>([^<]+)<rt class="XXL_L">([^<]+)</rt></ruby>')
-def remove_redundant_ruby_if_identical(text: str) -> str:
-    # <ruby>xxx<rt class="XXL_L">xxx</rt></ruby> のような
-    # 親文字列とルビが完全に同じ場合は <ruby>...</ruby> を除去して xxx にする
+@st.cache_data
+def load_replacements_lists(json_path: str) -> Tuple[List, List, List]:
+    # ... تحميل البيانات
 ```
-- CSVなどで「エスペラント単語」と「同じ文字列(漢字変換前後で同じ)」がマッピングされた場合などにルビを重複させても意味が無いので、  
-  このように**正規表現で「<ruby>xxx<rt>xxx</rt></ruby> を置き換える」**実装をしているわけです。
 
+يتيح مزخرف `@st.cache_data` تخزين نتائج الدالة مؤقتًا، مما يحسن الأداء بشكل كبير عند التعامل مع ملفات JSON كبيرة.
 
----
+### استخدام حالة الجلسة
 
+```python
+if submit_btn:
+    st.session_state["text0_value"] = text0
+    # ... معالجة النص
+```
 
-## 6. 補足ポイント
+يتيح `st.session_state` الاحتفاظ بالقيم بين إعادات تحميل الصفحة، مما يوفر تجربة مستخدم أفضل.
 
-### 6.1 文字数を元にした「置換優先度」の設計意図
+## 16. التفكير الختامي
 
-- 「(old単語の文字数) × 10000」 というのが、エスペラント文(漢字)置換用のJSONファイル生成ページ.py コード内の**肝**になっています。  
-- 文字数が長い単語ほど優先度が高い → **前方一致でマッチしたときに、短い語根に先に置換されてしまう」誤置換を防ぐ**ための仕組みです。  
-- 例: "kanto" という語根より "kanton" "kantalupo" など6文字・7文字の複合語を先に置換すべき場合があります。
+تطبيق استبدال نصوص الإسبرانتو بالأحرف الصينية (كانجي) يوضح كيفية معالجة مشكلة معقدة باستخدام مجموعة من التقنيات البرمجية المتقدمة. من خلال دراسة هذا التطبيق، يمكننا تعلم:
 
-### 6.2 Streamlit特有の注意点 (セッションステート, レイアウト, @st.cache_data, etc.)
+1. **نهج متعدد المراحل لمعالجة النصوص**: تقسيم المشكلة المعقدة إلى خطوات أصغر وأكثر قابلية للإدارة.
 
-- **`st.session_state`**  
-  - メインページでユーザーが入力したテキストをフォーム提出後も保持するために使っています。  
-- **`@st.cache_data`**  
-  - JSONファイルの読み込みをキャッシュしておき、**何度もロードする際にリソースを節約**します。  
-- **ページレイアウト**  
-  - `st.set_page_config(layout="wide")` や `components.html()` などで横幅を広く使い、HTMLプレビューを埋め込めるようにしている。  
+2. **استخدام العلامات البديلة لتجنب التداخل**: حل ذكي لمشكلة شائعة في الاستبدال النصي.
 
-### 6.3 大規模辞書(50MB級のJSON)を扱うときのパフォーマンス戦略
+3. **المعالجة المتوازية لتحسين الأداء**: كيفية تقسيم المهام الكبيرة للاستفادة من معالجات متعددة.
 
-- **@st.cache_data** の活用により、再読み込みを抑制する。  
-- **multiprocessing** での行単位並列化を有効活用する(特に main.py)。  
-- **エスペラント文(漢字)置換用のJSONファイル生成ページ.py** 側の JSON 生成も、parallel_build_pre_replacements_dict() で**部分的に並列化**。  
-- ただし Windows + Python + Streamlit の環境だとプロセスの立ち上げにオーバーヘッドがあるので、**テキスト行数がそこそこ大量**の場合にのみ効果がある。
+4. **التخزين المؤقت للبيانات**: كيفية تحسين الأداء من خلال تجنب إعادة المعالجة.
 
+5. **واجهة مستخدم تفاعلية**: كيفية بناء واجهة سهلة الاستخدام لمهمة معقدة.
 
----
+يمكن تطبيق العديد من هذه التقنيات والأفكار في مشاريع أخرى لمعالجة النصوص أو تطوير تطبيقات تعليم اللغات.
 
-# まとめ
-
-本アプリは、**「エスペラント文を(漢字)置換する」**というニッチな要件に合わせて、非常に細かい語根展開・品詞展開が実装されています。  
-
-- `main.py` ではユーザーが最終的に「置換用JSON(3つのリスト)」を読み込み、テキストを入力して**一括変換**するのがメイン機能。  
-- `エスペラント文(漢字)置換用のJSONファイル生成ページ.py` では「それに使う巨大な JSON(合并済み) をどうやって作るか？」を**GUI上で実行可能**な形にしています。  
-- `esp_text_replacement_module.py` と `esp_replacement_json_make_module.py` は、それぞれ  
-  - **文字列置換の本体**(大域置換/局所置換/並列化/ルビ付加/スペース置換)  
-  - **置換用データ(語根/訳語/語尾展開等)を扱う際のツール群**  
-  をまとめたモジュールという位置づけです。
-
-本番環境(クラウド or ローカル)で実際に動かす際は、**テキストが大きい場合に並列処理をONにする**などパフォーマンス面の工夫をすると効果的です。またユーザー定義JSONによって**細かい派生形をどう生成するか**も柔軟に変更できるため、大規模・緻密な翻訳ルールを扱う場合に適した設計になっています。  
-
-以上が、本アプリの仕組みを理解するためのポイントです。GUI操作はある程度わかっているとのことでしたので、**内部実装(どうやって置換フローを進めているか、どこでデータが合成されるか)** に注目して解説しました。実際の運用・改修の際には、ぜひ各モジュールの該当関数をカスタマイズしながら進めてみてください。  
+تطبيق رائع مثل هذا يوضح كيف يمكن للتكنولوجيا أن تسهل تعلم اللغات وتجسير الفجوات بين أنظمة الكتابة المختلفة، مما يجعل تعلم لغة عالمية مثل الإسبرانتو أكثر سهولة وإمتاعًا للناطقين بالعربية وغيرها من اللغات.
